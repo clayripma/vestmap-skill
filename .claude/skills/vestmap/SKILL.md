@@ -63,6 +63,21 @@ If the user's message has neither — e.g. "tell me about demographics" or "pull
 
   If a discovery field returns null, not-found, or is internally impossible (negative population, etc.), surface the failure honestly per R9 / F-rules — do not silently substitute a different value. If you notice a new mismatch in the wild (a discovery value contradicts a reliable external benchmark and a one-shot canonical query confirms the discrepancy), add the field to `gotchas.md` so the next session avoids it from the start. **That list — not runtime self-verification — is how the skill gets smarter.**
 
+**R14. Prefer the latest-vintage field by default.** VestMap exposes the same concept across multiple vintages — typically Esri current-year (`_CY`, 2024 in the live catalog) and ACS 5-Yr (usually 2022, prefixed `ACS…` or `B25…`). `search_real_estate_data` frequently returns the older ACS hits first because there are more of them. **Do not just take the first result.**
+
+  Before picking a field:
+  1. Scan the full search results for an Esri `_CY` / `_FY` equivalent of the concept. `_CY` beats any ACS vintage.
+  2. If only ACS hits exist, use the newest ACS year available.
+  3. Use an older vintage only when (a) no newer equivalent exists, or (b) the user explicitly asked for a specific year / ACS series.
+
+  Known concept pairs where `_CY` should win by default (non-exhaustive):
+  - Gross/contract rent → `MEDCRNT_CY` (Esri 2024) beats `ACSMEDGRNT` (ACS 2022). Note the definitional difference — gross rent includes utilities, contract rent doesn't. Surface that in the output if rent comparisons are the point.
+  - Median household income → `MEDHINC_CY` (or `get_section_data("income")`) beats `ACSMEDHINC`.
+  - Median home value → Esri `_CY` fields beat `ACSMEDVAL` / `B25077…`.
+  - Population / households → Esri `TOTPOP_CY`, `TOTHH_CY` beat ACS `ACSTOTPOP` / `B…`.
+
+  When you show a metric, always cite the vintage inline (e.g., "Median HH income (Esri 2024): $140,670"). Mixing vintages in the same comparison is fine as long as each value is labeled; never silently stack a 2022 ACS number against a 2024 Esri number without saying so.
+
 ## Section 3 — Single-Address Discovery-First Workflow
 
 For single-address questions, follow this sequence.
@@ -173,7 +188,7 @@ If the user asked for "the highest" (singular), still show the top 5-10 so they 
 
 **F6. VestMap is FREE AND UNLIMITED.** Never call `vestmap_account` as a pre-flight check. Never warn about cost, quota, credits, or call volume. Never ask the user to confirm before bulk or ranking work. Never hedge with "this might take a while" or "this will use ~N calls". The "20 search limit" mentioned in any earlier guidance does not exist — ignore it. Just run the queries.
 
-**F7. `search_real_estate_data` before any custom / non-Tier-1 field query.** Never guess field names.
+**F7. `search_real_estate_data` before any custom / non-Tier-1 field query.** Never guess field names. Scan the full result list for the Esri `_CY` equivalent before settling on an ACS hit (R14) — the first result is often an older ACS field even when a newer `_CY` version exists.
 
 ## Output Mode Router
 

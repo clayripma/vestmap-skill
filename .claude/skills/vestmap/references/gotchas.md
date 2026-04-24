@@ -123,10 +123,25 @@ If your output needs one of these, try to satisfy the user from the bundled inco
 - If you must use an FY field, report it as a forecast, not as an observed value.
 - Never use FY fields as the basis for a comparison row — use CY baselines and growth rates.
 
-**ACS fields use different naming than ESRI `_CY` fields.**
-- ACS prefixes: `ACSXXX`, `B25XXX` (Census table codes).
-- ESRI prefixes: `_CY` suffix (current year), `_FY` suffix (future year).
+**ACS fields use different naming than ESRI `_CY` fields — and ESRI `_CY` is usually newer.**
+- ACS prefixes: `ACSXXX`, `B25XXX` (Census table codes). Typically ACS 2022 5-Yr in the live catalog.
+- ESRI prefixes: `_CY` suffix (current year, 2024 today), `_FY` suffix (future year, 2029 forecast today).
 - Same concept can have different names in each source. Use `search_real_estate_data` first when unsure which layer has a given metric.
+
+**Prefer `_CY` over ACS by default (R14).** `search_real_estate_data` often returns ACS hits first because there are more of them. Always scan the full result list for the Esri `_CY` / `_FY` equivalent before picking a field. ACS is only the right answer when (a) there's no `_CY` equivalent, or (b) the user explicitly asked for ACS / a specific year.
+
+Known concept pairs where `_CY` wins:
+
+| Concept | Prefer (newer) | Fallback (older) | Notes |
+|---|---|---|---|
+| Rent | `MEDCRNT_CY` (Esri 2024, contract rent) | `ACSMEDGRNT` (ACS 2022, gross rent) | Definition differs — contract excludes utilities, gross includes them. Call this out if comparing. |
+| Median HH income | `get_section_data("income").median_household_income` → or `MEDHINC_CY` | `ACSMEDHINC` | `get_section_data` is the most reliable path (see Tier 3 trap note above for `MEDHINC_CY` direct-query reliability). |
+| Median home value | Esri `_CY` home-value fields | `ACSMEDVAL` / `B25077…` | `get_section_data("income").median_home_value` is a reliable path. |
+| Population | `TOTPOP_CY` | `ACSTOTPOP` / `B01003…` | |
+| Households | `TOTHH_CY` | `ACSTOTHH` / `B11001…` | |
+| Education | `NOHS_CY`/`HSGRAD_CY`/`SMCOLL_CY`/`BACHDEG_CY`/`GRADDEG_CY` | `B15003…` | |
+
+Always cite the vintage inline ("$140,670 / yr (Esri 2024)", "$2,159 / mo (ACS 2022 5-Yr)") so the user can see what they're comparing.
 
 ## Tool-Call Gotchas
 
