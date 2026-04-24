@@ -17,6 +17,42 @@ For ranking tables, after the ranked list append: "Top 1 vs median of the set: +
 
 Skip this only when literally one value is shown (no comparison possible) or the user explicitly asked for raw numbers only.
 
+## §Snapshot — default output mode
+
+**This is the default shape for any bare or vague single-location request** ("tell me about 123 Main St", "what's going on at this ZIP?", "is this a good area?", or just an address / ZIP pasted with no instruction). Markdown only — no HTML, no branded header, no fixed container. Cite every field's vintage inline per R14.
+
+### Build from the standard discovery batch
+
+```
+get_section_data(address, "income")      → income table + home value
+get_section_data(address, "expansion")   → population growth CAGR
+get_section_data(address, "crime")       → Block Group offense counts
+```
+Skip `schools` unless the user mentioned schools. Route around bad-list fields per R13 (e.g., swap in a `query_gis_field` on `MHIGRWCYFY` if you need forecasted income growth).
+
+### Layout (in order)
+
+1. **Header** — one line: `address · locality · county · ZIP`
+2. **Income table** — median household income at **Block Group / Tract / ZIP / County** (cite `(Esri 2024)` or whatever vintage the section reports).
+3. **Population growth CAGR** — **Tract / ZIP / County**, forecast window noted (e.g., `2024 → 2029`).
+4. **Home value** — **Block Group / Tract / ZIP**, from `income.median_home_value`.
+5. **Crime** — **top 3-4 offense categories** by Block Group count, raw counts only (no per-capita unless `TOTPOP_CY` also returned at Block Group — R11).
+6. **Closing line** — render exactly:
+
+   > *Want to go deeper? I can add: schools · natural hazards · income distribution · occupation mix · education mix · rental market · full OM page.*
+
+### Scope behavior
+
+- **User gave a street address** → include all four scales where available (Block Group / Tract / ZIP / County).
+- **User gave a ZIP or city (no street address)** → **silently omit Block Group rows** from the income and home-value tables; they are not meaningful at that scope. Do not call them out, do not leave blanks.
+- Any individual scale that returns null → omit that row per R9. Do not write "N/A".
+- R7 cross-scale deltas still apply — add a short delta line under each multi-scale table.
+
+### What §Snapshot is NOT
+
+- Not a brief. Do not expand into prose sections for occupations, education, hazards, tenure. Those are gated behind the closer and only appear if the user asks.
+- Not a template. If a section has no data, delete it — do not pad.
+
 ## §Quick — one-liner with comparison
 
 For "What's X at this address?" style questions. One sentence + inline comparison across Block / Tract / ZIP.
@@ -68,9 +104,16 @@ Rows = addresses, Columns = metrics. Include a `Level` column indicating the sma
 
 If address coverage differs significantly (e.g. some rows at Block, others at Tract), note that above the table. Do not silently mix levels without calling it out.
 
-## §Brief — discovery-driven markdown brief
+## §Brief — discovery-driven markdown brief (opt-in only)
 
-For "Due diligence on X" or "Give me a full neighborhood analysis".
+**Opt-in only.** The default shape for address requests is §Snapshot. Switch to §Brief only when the user explicitly asks for one of:
+
+- "due diligence"
+- "full brief"
+- "everything you have"
+- a named research artifact ("neighborhood analysis", "investment memo", "full workup")
+
+If the user just said "tell me about this address" or pasted an address with no instructions, use §Snapshot and let them opt into a Brief via the §Snapshot closer line. Do NOT pre-emptively run a Brief because the user sounds serious.
 
 ### This is NOT a fixed template
 

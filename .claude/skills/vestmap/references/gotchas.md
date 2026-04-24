@@ -29,32 +29,58 @@ Things that bite. Consult this file when a query misbehaves or a result looks wr
 - `crime` returns raw counts at Block Group (normalize by `TOTPOP_CY` only if `TOTPOP_CY` actually returned — otherwise present counts as-is).
 - `schools` returns top 3 schools with ratings and URLs.
 
-**⚠️ Reliability of the bundled section ≠ correctness of every field inside it.** "100% reliable" means the call returns a payload — it does NOT mean every value inside that payload matches the canonical GIS field. See "Confirmed discovery-vs-field mismatches" below for fields where the section value disagrees with the raw layer. Always apply R13 verification before serving discovery values for forecasted growth rates or anything decision-grade.
+**⚠️ Reliability of the bundled section ≠ correctness of every field inside it.** "100% reliable" means the call returns a payload — it does NOT mean every value inside that payload matches the canonical GIS field. See "Known bad/incomplete discovery fields" below for fields that are confirmed wrong or incomplete; route around those up front per R13.
 
-## Confirmed Discovery-vs-Field Mismatches (R13)
+## Known bad/incomplete discovery fields
 
-Cases where `get_section_data(...)` returns a value that does NOT match the canonical `_CY` / `_FY` field on the underlying GIS layer. **Always prefer the direct field query for these metrics.**
+**Authoritative routing list referenced by R13.** These are `get_section_data(...)` fields that are confirmed — via reproducible direct-query comparison — to be wrong or incomplete. For any field on this list, **skip discovery entirely** and query the canonical `_CY` / `_FY` via `query_gis_field`. Do not re-verify fields that are not on this list; trust discovery for those.
 
-### `annual_forecasted_median_income_growth` (income section)
+### Adding entries
 
-**Symptom:** Two distinct problems.
+Entries are added only after a confirmed, reproducible mismatch against the raw GIS layer at the same geography. One-off anomalies, cross-scale differences that reflect real population differences, and null values at scales that don't carry the metric are NOT mismatches — do not list them here. The list should grow slowly and deliberately.
+
+### Current entries
+
+#### `annual_forecasted_median_income_growth` (income section)
+
+**Problems:**
 1. **Coverage gap:** the payload only contains `tract` and `zip` keys. Block Group is omitted, even though `MHIGRWCYFY` exists at Block Group `/12`.
-2. **Value mismatch at ZIP:** the `zip` value returned by the section has been observed to disagree with the canonical `MHIGRWCYFY` field at layer `/9` by ~6×. (Example: 295 Clementina St, Louisville CO 80027 — section returned `0.46%`, direct query of `MHIGRWCYFY` at `/9` returned `2.74%`. Tract values matched at `2.24%`, so it's a ZIP-specific issue.)
+2. **Value mismatch at ZIP:** the `zip` value returned by the section disagrees with the canonical `MHIGRWCYFY` field at layer `/9`. (Example: 295 Clementina St, Louisville CO 80027 — section returned `0.46%`, direct `MHIGRWCYFY` at `/9` returned `2.74%`. Tract values matched at `2.24%`.)
 
-**Workaround:** ignore the section's growth-rate values. Query `MHIGRWCYFY` directly via:
+**Route to:** `MHIGRWCYFY` via `query_gis_field` on:
 - Block Group: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/12`
 - Tract: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/11`
 - ZIP: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/9`
 - County: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/7`
 
-Pair with `PCIGRWCYFY` (Per Capita Income CAGR) on the same layers if needed. Use `MEDCRNT_CY` / `MEDCRNT_FY` on the same layers for forecasted rent (compute CAGR as `(FY/CY)^(1/5) − 1`). Use `HUGRWCYFY` (total housing units CAGR) and `RNTGRWCYFY` (renter-occupied units CAGR) for unit-supply forecasts.
+Pair with `PCIGRWCYFY` (per-capita income CAGR) on the same layers if needed. Use `MEDCRNT_CY` / `MEDCRNT_FY` on the same layers for forecasted rent (compute CAGR as `(FY/CY)^(1/5) − 1`). Use `HUGRWCYFY` (total housing units CAGR) and `RNTGRWCYFY` (renter-occupied units CAGR) for unit-supply forecasts.
 
-### When to suspect a new mismatch
-- A discovery value at one scale is an order of magnitude off from the values at neighboring scales for what should be a smoothly-varying metric (income, rent, growth rates).
-- Discovery returns a value that contradicts a known external benchmark.
-- Discovery omits a scale (Block / County) that the user explicitly asked for, even though a layer-level query should be possible there.
+### What is NOT a mismatch (do not add to the list)
 
-In all three cases: run the canonical field via `query_gis_field` at every scale the user wants, and add the confirmed mismatch to this section so it's caught next time.
+- **Legitimate scale differences.** Block Group income ≠ Tract income ≠ ZIP income because they cover different populations. That is the point of comparing scales. Do not flag this as divergence.
+- **Null at a scale that doesn't carry the field.** E.g., crime at Tract returns null because crime is Block-Group-only. Surface the gap (R9), don't escalate it here.
+- **Fresh values the user hasn't seen before.** Unfamiliarity isn't a mismatch — only reproducible disagreement vs. the raw layer is.
+
+## Latest-vintage field pairs (R14)
+
+When `search_real_estate_data` returns both an Esri `_CY` / `_FY` hit and an ACS hit for the same concept, prefer the Esri one unless the user explicitly asked for ACS. Always cite vintage inline (`(Esri 2024)` / `(ACS 2022 5-Yr)`).
+
+| Concept | Prefer (newer) | Fallback (older) | Notes |
+|---|---|---|---|
+| Median rent | `MEDCRNT_CY` (Esri) | `ACSMEDGRNT` (ACS) | ⚠️ `MEDCRNT_CY` is *contract* rent (payment to landlord only). `ACSMEDGRNT` is *gross* rent (contract + utilities). Not interchangeable — call out the definitional difference whenever you report either. |
+| Median household income | `MEDHINC_CY` (Esri) | `ACSMEDHINC` (ACS) | Same concept, Esri is current-year modeled, ACS is 5-year rolling average. |
+| Median home value | `MEDVAL_CY` (Esri) | `ACSMEDVAL` (ACS) | Prefer `_CY`. |
+| Total population | `TOTPOP_CY` (Esri) | `ACSTOTPOP` (ACS) | Prefer `_CY` when available; `TOTPOP_CY` is known Tier-2 (~50% success), so ACS may be the only option at some geographies. |
+| Households | `TOTHH_CY` (Esri) | `ACSTOTHH` (ACS) | Prefer `_CY` (Tier-1 reliable). |
+
+**How to use this table:**
+1. `search_real_estate_data(<concept>)` — always.
+2. Scan **the full result set**, not just the first hit — ACS fields often appear first alphabetically.
+3. If both a `_CY` and an ACS hit exist, pick the `_CY`.
+4. Cite vintage inline: e.g., *"Median HH income $72,500 `(Esri 2024)`"*.
+5. For rent, always note contract-vs-gross when citing either field.
+
+When a new pair is discovered (same concept, both vintages present in search results), add the row here.
 
 ## Flaky Fields That Look Reliable (Tier 3 Trap)
 
