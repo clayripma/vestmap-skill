@@ -17,6 +17,45 @@ For ranking tables, after the ranked list append: "Top 1 vs median of the set: +
 
 Skip this only when literally one value is shown (no comparison possible) or the user explicitly asked for raw numbers only.
 
+## §Snapshot — curated default for bare/vague input
+
+**This is the default output when the user gives a location without specifying a metric** ("tell me about 123 Main St", "what's 80027 like", or just an address pasted in cold). Do not route to §Brief for vague input — §Brief is opt-in only.
+
+Goal: a compact, high-signal markdown summary + an explicit menu of follow-ups so the user can easily go deeper. Modeled on the OM Pages default sections but stripped to the essentials.
+
+### Discovery calls (parallel)
+
+```
+get_section_data(address, "income")
+get_section_data(address, "expansion")
+get_section_data(address, "crime")
+```
+
+Skip `"schools"` unless the user touches schools. R13 still applies: for any field on the "Known bad/incomplete discovery fields" list in `gotchas.md`, go direct with `query_gis_field` instead of using the section value.
+
+### Contents (fixed — render in this order, omit rows that returned null per R9)
+
+1. **Header line** — address · locality · county · ZIP (from the geocode / section metadata).
+2. **Income** — median HH income at Block / Tract / ZIP / County, one small table. Apply R7: add a delta line underneath (e.g., "County exceeds Block by ~$X (Y%)").
+3. **Population growth** — 5-yr CAGR at Tract / ZIP / County (from `expansion`). Add R7 delta.
+4. **Home value** — median home value at Block / Tract / ZIP (from `income`). Add R7 delta.
+5. **Crime** — Block Group raw counts, top 3–4 categories only (from `crime`). No per-capita computation unless `TOTPOP_CY` returned at Block Group (R11).
+6. **Closing line (always):**
+
+> Want to go deeper? I can add: schools · natural hazards · income distribution · occupation mix · education mix · rental market · full OM page.
+
+### Format rules
+
+- Markdown only (never PDF).
+- No branded header, no CSS, no fixed width.
+- Per R9: if a row's data returned null, omit the row entirely — no "N/A," no apology.
+- **When the user gave a ZIP / city / county / region rather than a street address, silently omit the Block Group row.** Do not warn, do not apologize, do not explain the omission — just start at the smallest scale the geocode supports.
+- If an entire section (e.g., `crime`) returned null, omit the whole section. If *all* discovery sections returned null (rare), fall back to the §Brief "nothing returned" honest-failure message.
+
+### Not in §Snapshot (opt-in via the closing menu)
+
+Schools, natural hazards / FEMA NRI, occupation mix, education mix, income-distribution buckets, HPI, rental market, business counts, Tapestry, full OM-style brief. Route these to §Compare / §Brief / dedicated queries when the user asks.
+
 ## §Quick — one-liner with comparison
 
 For "What's X at this address?" style questions. One sentence + inline comparison across Block / Tract / ZIP.
@@ -69,6 +108,8 @@ Rows = addresses, Columns = metrics. Include a `Level` column indicating the sma
 If address coverage differs significantly (e.g. some rows at Block, others at Tract), note that above the table. Do not silently mix levels without calling it out.
 
 ## §Brief — discovery-driven markdown brief
+
+**§Brief is opt-in only** — use it when the user explicitly asks for "due diligence," "full brief," "everything you have," "neighborhood analysis," or a comparably exhaustive write-up. **Do not route here for bare addresses or vague prompts** — those go to §Snapshot.
 
 For "Due diligence on X" or "Give me a full neighborhood analysis".
 

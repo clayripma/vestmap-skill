@@ -29,11 +29,13 @@ Things that bite. Consult this file when a query misbehaves or a result looks wr
 - `crime` returns raw counts at Block Group (normalize by `TOTPOP_CY` only if `TOTPOP_CY` actually returned — otherwise present counts as-is).
 - `schools` returns top 3 schools with ratings and URLs.
 
-**⚠️ Reliability of the bundled section ≠ correctness of every field inside it.** "100% reliable" means the call returns a payload — it does NOT mean every value inside that payload matches the canonical GIS field. See "Confirmed discovery-vs-field mismatches" below for fields where the section value disagrees with the raw layer. Always apply R13 verification before serving discovery values for forecasted growth rates or anything decision-grade.
+**⚠️ Reliability of the bundled section ≠ correctness of every field inside it.** "100% reliable" means the call returns a payload — it does NOT mean every value inside that payload matches the canonical GIS field. A small number of discovery fields are known to be wrong or incomplete; they're listed under "Known bad/incomplete discovery fields (R13)" below. Skip the section value for those and go direct. For every other field, trust discovery and move on — do NOT cross-check at runtime.
 
-## Confirmed Discovery-vs-Field Mismatches (R13)
+## Known bad/incomplete discovery fields (R13)
 
-Cases where `get_section_data(...)` returns a value that does NOT match the canonical `_CY` / `_FY` field on the underlying GIS layer. **Always prefer the direct field query for these metrics.**
+This is the **authoritative list** of `get_section_data` fields that are known to be wrong, incomplete, or missing scales. Use it to pick the right tool up front: for any metric below, skip `get_section_data` and query the canonical `_CY` / `_FY` field via `query_gis_field` directly.
+
+**The list is exhaustive.** If a field is not here, trust the discovery value — do NOT cross-check it as a matter of routine. Runtime self-verification is explicitly not how this skill works: we get smarter by growing this list as confirmed mismatches surface, not by double-querying every value.
 
 ### `annual_forecasted_median_income_growth` (income section)
 
@@ -49,12 +51,15 @@ Cases where `get_section_data(...)` returns a value that does NOT match the cano
 
 Pair with `PCIGRWCYFY` (Per Capita Income CAGR) on the same layers if needed. Use `MEDCRNT_CY` / `MEDCRNT_FY` on the same layers for forecasted rent (compute CAGR as `(FY/CY)^(1/5) − 1`). Use `HUGRWCYFY` (total housing units CAGR) and `RNTGRWCYFY` (renter-occupied units CAGR) for unit-supply forecasts.
 
-### When to suspect a new mismatch
-- A discovery value at one scale is an order of magnitude off from the values at neighboring scales for what should be a smoothly-varying metric (income, rent, growth rates).
-- Discovery returns a value that contradicts a known external benchmark.
-- Discovery omits a scale (Block / County) that the user explicitly asked for, even though a layer-level query should be possible there.
+### Growing the list (how we catch new mismatches)
 
-In all three cases: run the canonical field via `query_gis_field` at every scale the user wants, and add the confirmed mismatch to this section so it's caught next time.
+**Do not treat this as a per-query cross-check routine.** These are the triggers for when to *investigate once* in-session and, if confirmed, add a new entry to the list above so the next session skips discovery from the start:
+
+- A user flags that a discovery value contradicts a reliable external benchmark they know.
+- Discovery omits a scale (e.g., Block Group, County) that a canonical-layer query reveals actually exists at that scale — fill the missing scale directly; if this happens twice for the same field, add it to the list.
+- You're about to call `search_real_estate_data` for a metric and find that the section field and the canonical `_CY` / `_FY` field have noticeably different definitions or vintage.
+
+When a new mismatch is confirmed: run the canonical field via `query_gis_field` once, prefer that value, and **add the field to the "Known bad/incomplete discovery fields" list above with a symptom + workaround entry**. That is the only sanctioned route for the skill to get smarter — not runtime self-verification.
 
 ## Flaky Fields That Look Reliable (Tier 3 Trap)
 

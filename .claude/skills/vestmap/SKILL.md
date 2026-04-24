@@ -28,6 +28,13 @@ Trigger on any of:
 
 ## Always-Follow Rules (hard constraints, no exceptions)
 
+**R0. Location scope required.** Before any VestMap tool call, confirm the user has specified a **location scope**. A scope can be either:
+
+- a specific US address / ZIP / city / county / metro (single-address workflow, Section 3), OR
+- a region with a defined ranking question, e.g. "which ZIPs in Colorado have the highest pop growth?" / "which states have the highest income?" (ranking workflow, Section 4 — the state/region IS the scope).
+
+If the user's message has neither — e.g. "tell me about demographics" or "pull some property data" with no place attached — ask one concrete question ("What address, ZIP, or region should I look at?") and stop. Do not guess, do not reuse a prior-session location, do not pick a sample address. **Open-ended ranking questions are a valid scope** — do not ask the user to narrow those down (that's R12).
+
 **R1. Block / Tract / ZIP is the default comparison framework** for single-address comparisons. Never 1/3/5 mile radius. Add County for income-distribution Diffs and macro context. Add State only on explicit request.
 
 **R2. Query ≤3 fields per `query_gis_field` call.** Multi-field batches (>3 fields) fail ~40% of the time because one missing field zeroes the whole call. Use parallel tool calls.
@@ -52,15 +59,9 @@ Trigger on any of:
 
 **R12. Open-ended questions get full exploration.** When the user asks something exploratory ("which X has highest Y", "rank the top 10", "find me the best Z in this state", "explore neighborhoods near…"), do NOT ask the user to narrow it down. Do NOT warn about how many calls it will take. Do NOT check quota. Enumerate the candidate set and run the calls in parallel. VestMap is unlimited — use it freely. The user wants you to figure it out, not to manage call budgets.
 
-**R13. Verify discovery output before serving it as the final answer.** `get_section_data` is convenient but not authoritative — it can (a) omit geographic levels that the underlying GIS layer actually carries, and (b) source a metric from a different/older field than the canonical `_CY`/`_FY` field with the same name. Both have been observed in production. When ANY of the following is true, do NOT accept the discovery payload as-is — fall back to `query_gis_field` against the canonical field at every requested geographic level:
+**R13. Pick the right field up front; don't cross-check discovery against itself.** `get_section_data` is the default single-address tool. A small set of its fields are known to be wrong, incomplete, or missing scales — those are listed in `gotchas.md` under **Known bad/incomplete discovery fields**. For any metric on that list, skip the section value entirely and query the canonical `_CY` / `_FY` field via `query_gis_field` instead. For every other field, trust the discovery value and move on — do **not** re-query to "verify," do **not** flag Block vs Tract vs ZIP differences as divergence (those scales are supposed to differ).
 
-  - **Coverage gap:** the user asked for the metric at a scale (e.g., Block Group) that the discovery payload doesn't include. Do not silently drop the row — query the field directly at that layer.
-  - **Anomaly check:** a discovery value at one scale looks wildly inconsistent with neighboring scales (e.g., ZIP forecast = 0.46% while Tract = 2.24% and County = 3.62%). Verify the outlier by direct query before reporting.
-  - **High-stakes metric:** any forecasted growth rate, projection (`_FY`), or anything the user is using to make a decision. Cross-check at least one scale against the canonical field.
-
-  Workflow: `search_real_estate_data(<metric>)` → identify canonical field name + layer URLs at each scale → `query_gis_field` at Block `/12`, Tract `/11`, ZIP `/9`, County `/7` (parallel, ≤3 fields per call) → if direct query disagrees with discovery at the same geo, **prefer the direct query** and surface the divergence to the user with both values cited. Document any confirmed mismatches in `references/gotchas.md` so future sessions skip discovery for that specific metric.
-
-  Known confirmed mismatches: `annual_forecasted_median_income_growth` from `get_section_data("income")` vs `MHIGRWCYFY` from layer `/9` — the canonical field is the correct one to use; the section value is unreliable. See `gotchas.md`.
+  If a discovery field returns null, not-found, or is internally impossible (negative population, etc.), surface the failure honestly per R9 / F-rules — do not silently substitute a different value. If you notice a new mismatch in the wild (a discovery value contradicts a reliable external benchmark and a one-shot canonical query confirms the discrepancy), add the field to `gotchas.md` so the next session avoids it from the start. **That list — not runtime self-verification — is how the skill gets smarter.**
 
 ## Section 3 — Single-Address Discovery-First Workflow
 
@@ -72,9 +73,10 @@ For single-address questions, follow this sequence.
 get_section_data(address, "income")     → median HH income @ Block/Tract/ZIP/County/State/National,
                                            median home value @ Block/Tract/ZIP,
                                            annual_forecasted_median_income_growth @ Tract/ZIP only
-                                           ⚠️  Block Group is OMITTED. ZIP value has been observed to disagree
-                                              with canonical MHIGRWCYFY at /9 — VERIFY per R13 if the user is
-                                              comparing scales or making decisions on income growth.
+                                           ⚠️  This `annual_forecasted_median_income_growth` field is on the
+                                              "Known bad/incomplete discovery fields" list in gotchas.md — do NOT
+                                              use the section value. Query MHIGRWCYFY via query_gis_field instead
+                                              whenever the user needs forecasted income growth.
 get_section_data(address, "expansion")  → population growth CAGR @ Block/Tract/ZIP/County/State/National
 get_section_data(address, "crime")      → raw crime counts @ Block Group
 get_section_data(address, "schools")    → top 3 nearest schools + district_name (only if user touches schools)
@@ -85,21 +87,22 @@ get_section_data(address, "schools")    → top 3 nearest schools + district_nam
 - `neighborhood` — empirically broken (0/12 success in past logs)
 - `hpi` — ~10% failure rate, only call if user specifically wants HPI
 
-### Step 2 — Evaluate & Verify (R13)
+### Step 2 — Route, don't verify (R13)
 
-For each user need:
-- **Fully answered by discovery at every requested scale** AND **values look internally consistent**? proceed to output.
-- **Discovery omits a scale the user asked about** (e.g., user wants Block + Tract + ZIP + County, but `annual_forecasted_median_income_growth` only ships `tract` and `zip`)? Do NOT silently drop the missing scales — go to Step 3 and `query_gis_field` the canonical field at the missing layers.
-- **Discovery returns a value that looks anomalous** (e.g., one scale is an order of magnitude off from neighboring scales for what should be a smoothly-varying metric like income growth)? Cross-check the outlier by direct query in Step 3 before reporting.
-- **The metric is forecast / decision-grade** (any `_FY` projection, growth rate, or value the user will act on)? Verify at least the headline scale against the canonical field.
+For each metric the user asked about:
 
-When direct query disagrees with discovery at the same geography, **prefer the direct query**, surface the divergence in your output (cite both values), and add the mismatch to `references/gotchas.md` if it's not already documented.
+- **Is the field on the "Known bad/incomplete discovery fields" list in `gotchas.md`?** Skip the section value and go to Step 3 — query the canonical `_CY` / `_FY` field via `query_gis_field`. Do not use the section payload for that metric.
+- **Did the user ask for a scale the discovery payload doesn't carry** (e.g., Block Group for a field that only ships Tract/ZIP)? Fill just that scale in Step 3 with a direct `query_gis_field` call. Do not silently drop the requested scale.
+- **Otherwise, use the discovery value as-is.** Do not re-query to check it. Do not flag Block vs Tract vs ZIP deltas as "divergence" — those scales are supposed to differ; that's what R7 surfaces to the user as a feature, not a bug.
+- **If discovery returned null, not-found, or errored** for a metric, handle per F1 / F4 — escalate one level or surface honestly. Never silently substitute a different value.
 
-### Step 3 — Targeted `query_gis_field` Fill-In & Verification
+### Step 3 — Targeted `query_gis_field` Fill-In
 
 Tier-based selection from `references/fields.md`. Parallel calls, ≤3 fields each, across Block (`/12`), Tract (`/11`), ZIP (`/9`), County (`/7`).
 
-For verification of a discovery metric: `search_real_estate_data(<metric>)` → identify the canonical `_CY` / `_FY` field name → query it at every scale the user wanted, in parallel.
+Use this step for: (a) Tier 1 metrics not bundled in discovery (e.g., occupation mix, education mix, income distribution buckets); (b) fields flagged in the "Known bad/incomplete discovery fields" list; (c) missing scales the user explicitly asked for but discovery didn't ship.
+
+When querying a canonical replacement for a bad discovery field: `search_real_estate_data(<metric>)` → identify the canonical `_CY` / `_FY` field name → query it at every scale the user wanted, in parallel. Query once and trust the result — do not re-query for a cross-check.
 
 - **Tier 1 (>80%):** all 13 occupations, 5 reliable education fields, 9 HINC buckets + TOTHH, EMP_CY, UNEMP_CY, FAMHH_CY
 - **Tier 2 (~50%):** TOTPOP_CY, UNEMPRT_CY, AVGHINC_CY
@@ -176,23 +179,24 @@ If the user asked for "the highest" (singular), still show the top 5-10 so they 
 
 | User intent | Output shape | Reference |
 |---|---|---|
+| Bare address / "tell me about X" / no specific metric | Curated markdown snapshot + deeper-dive menu | `output-modes.md §Snapshot` |
 | "What's X here?" | Inline markdown 1-liner with B/T/Z comparison | `output-modes.md §Quick` |
 | "Compare Block / Tract / ZIP" | 3-column markdown table | `output-modes.md §Compare` |
 | "Show me neighborhoods A, B, C" | Multi-address markdown table | `output-modes.md §MultiAddr` |
-| "Due diligence on X" / "Neighborhood brief" | Discovery-driven markdown brief | `output-modes.md §Brief` |
+| "Due diligence on X" / "Full brief" / "Everything you have" | Discovery-driven markdown brief | `output-modes.md §Brief` |
 | "Which X has highest Y in [region]" / "Top N" | Ranked markdown table with values | `output-modes.md §Rank` |
 | "Database of N addresses" | CSV file | `output-modes.md §Bulk` |
 | "Can you show a map?" | Leaflet + ESRI tiles | `output-modes.md §Map` |
+
+**If the user's intent is ambiguous, default to §Snapshot — never §Brief.** §Brief is opt-in for explicit phrases like "due diligence," "full brief," or "everything you have."
 
 This skill deliberately does NOT have an "OM HTML page" output mode. If asked for HTML OM, use §Brief + §Map and let the user drive the visual design.
 
 ## Quick Reference Summary
 
-**Single-address tool order:** parallel `get_section_data(income, expansion, crime, schools)` → evaluate **AND verify per R13** (coverage gaps + anomaly check + decision-grade metrics) → `query_gis_field` for Tier 1 gaps and verification → apply R7 (quantitative deltas across scales) / R9 / R10 / R11 → output.
+**Single-address tool order:** confirm a location scope (R0) → parallel `get_section_data(income, expansion, crime, schools)` → **route, don't verify** (R13 — for fields on the "Known bad/incomplete discovery fields" list, go direct; otherwise trust discovery) → `query_gis_field` for Tier 1 gaps and for any bad-list field the user asked about → apply R7 (quantitative deltas across scales) / R9 / R10 / R11 → output.
 
-**Known-mismatch quick list** (always prefer direct field over discovery):
-- `annual_forecasted_median_income_growth` (income section) → use `MHIGRWCYFY` at `/12` `/11` `/9` `/7` instead.
-- (Add new mismatches here as you find them; cross-link in `gotchas.md`.)
+**Known bad/incomplete discovery fields:** the authoritative list lives in `gotchas.md` under "Known bad/incomplete discovery fields (R13)." That list is exhaustive — if a field is not there, trust discovery. Currently listed: `annual_forecasted_median_income_growth` (income section) → use `MHIGRWCYFY` at `/12` `/11` `/9` `/7` instead.
 
 **Ranking tool order:** enumerate candidates → parallel `get_section_data(<section>)` per candidate → extract target metric → sort → drop blanks → top N table. No quota concerns, no confirmation step.
 
@@ -224,4 +228,4 @@ This skill deliberately does NOT have an "OM HTML page" output mode. If asked fo
 - Layer URL / coverage / priority → `references/layers.md`
 - Formulas / computation viability gates → `references/computations.md`
 - Section quirks and failure modes → `references/gotchas.md`
-- Output templates including §Brief, §Rank, §Map → `references/output-modes.md`
+- Output templates including §Snapshot (default), §Brief, §Rank, §Map → `references/output-modes.md`
