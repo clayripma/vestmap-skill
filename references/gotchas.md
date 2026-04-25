@@ -10,56 +10,37 @@ Things that bite. Consult this file when a query misbehaves or a result looks wr
 - This is lifestyle segmentation copy, not hard data. **Never use it as a metric source** (R5 forbids this). If you need population or age, use Tier 1 `query_gis_field` (e.g., `TOTHH_CY`, `FAMHH_CY`) or accept the gap.
 - Historical: 21/21 calls succeeded technically, but the content is not useful for hard-data reports.
 
-**`get_section_data(address, "neighborhood")` is BROKEN (0/12 success).**
-- Returns "No data available" 100% of the time in past logs.
-- Do not call it as part of discovery.
-- If the user asks for neighborhood character / walkability / transit scores, use `search_real_estate_data("walkability")` or similar to find specific fields.
+**`get_section_data(address, "neighborhood")`** has consistently returned "No data available" in past logs. Don't call it as part of the default discovery batch. If the user asks for neighborhood character / walkability / transit scores, run `search_real_estate_data("walkability")` or similar and use the returned field/layer directly.
 
-**`get_section_data(address, "hpi")` is FRAGILE (~90% success).**
-- About 10% of calls return "No data available".
-- Only call when the user specifically needs House Price Index.
-- Always handle the failure path — do not assume the data returned.
-- The response structure for successful calls is inconsistent in logs; verify before building output.
+**`get_section_data(address, "hpi")`** is fragile. Only call when the user specifically asks for House Price Index. Always handle the failure path; the response structure has been inconsistent.
 
-**`get_section_data(address, "income")`, `"expansion"`, `"crime"`, `"schools"` are the RELIABLE four.**
-- 100% success across 74 past calls combined.
-- These four are your discovery batch. Lead with them.
-- `income` returns comparisons at Block/Tract/ZIP/County/State/National — far more than you get from raw field queries.
-- `expansion` returns population growth CAGR at all six levels.
-- `crime` returns raw counts at Block Group (normalize by `TOTPOP_CY` only if `TOTPOP_CY` actually returned — otherwise present counts as-is).
+**`get_section_data(address, "income")`, `"expansion"`, `"crime"`, `"schools"`** are the standard discovery batch — they reliably return a payload.
+- `income` carries comparisons at Block/Tract/ZIP/County/State/National.
+- `expansion` returns population growth CAGR.
+- `crime` returns raw counts at Block Group (normalize by `TOTPOP_CY` only if `TOTPOP_CY` also came back — otherwise present counts as-is, R11).
 - `schools` returns top 3 schools with ratings and URLs.
 
-**⚠️ Reliability of the bundled section ≠ correctness of every field inside it.** "100% reliable" means the call returns a payload — it does NOT mean every value inside that payload matches the canonical GIS field. See "Known bad/incomplete discovery fields" below for fields that are confirmed wrong or incomplete; route around those up front per R13.
+Again: payload returns ≠ canonical values. For quantitative output, verify per R13/R14.
 
-## Known bad/incomplete discovery fields
+**⚠️ Reliability of the bundled section ≠ correctness of every field inside it.** A section call returning a payload does NOT mean every value in that payload matches the canonical GIS field. Sections can be wired to older services (see "Illustrative drift examples" below) or omit scales the underlying layer actually carries. For quantitative output, verify the canonical source per R13/R14.
 
-**Authoritative routing list referenced by R13.** These are `get_section_data(...)` fields that are confirmed — via reproducible direct-query comparison — to be wrong or incomplete. For any field on this list, **skip discovery entirely** and query the canonical `_CY` / `_FY` via `query_gis_field`. Do not re-verify fields that are not on this list; trust discovery for those.
+## Illustrative drift examples
 
-### Adding entries
+These are confirmed cases where `get_section_data(...)` returned a value that disagrees with the canonical field on the newest available service. They are **evidence of the general pattern**, not an exhaustive routing list — don't treat "not on this list" as a license to skip canonical verification. The real rule is R13: for quantitative output, search → newest-vintage service → canonical query. These examples exist so the pattern is concrete, not so the agent has a lookup table.
 
-Entries are added only after a confirmed, reproducible mismatch against the raw GIS layer at the same geography. One-off anomalies, cross-scale differences that reflect real population differences, and null values at scales that don't carry the metric are NOT mismatches — do not list them here. The list should grow slowly and deliberately.
+### `annual_forecasted_median_income_growth` (income section)
 
-### Current entries
+Stale service vintage + coverage gap.
 
-#### `annual_forecasted_median_income_growth` (income section)
+- **What the section returns:** only `tract` and `zip` keys; Block Group, County, State, National are absent.
+- **Service drift:** the ZIP value is sourced from a 2021-2026 vintage (older `USA_Demographics_and_Boundaries_2021` service). Direct query of `MHIGRWCYFY` on `USA_Demographics_and_Boundaries_2024` returned a materially different 2024-2029 value at the same ZIP (`0.46%` via section vs `2.74%` via canonical at ZIP 80027). The Tract value happened to match, but same-geography agreement on one scale doesn't mean the section is canonical elsewhere.
+- **General takeaway:** any forecast-growth field from a section should be treated as orientation only; run `search_real_estate_data("<metric>")`, pick the hit on the newest-vintage service URL, and `query_gis_field` at the scales you actually want. The specific layer numbers on the newest service aren't memorizable in advance — search returns them per query.
 
-**Problems:**
-1. **Coverage gap:** the payload only contains `tract` and `zip` keys. Block Group is omitted, even though `MHIGRWCYFY` exists at Block Group `/12`.
-2. **Value mismatch at ZIP:** the `zip` value returned by the section disagrees with the canonical `MHIGRWCYFY` field at layer `/9`. (Example: 295 Clementina St, Louisville CO 80027 — section returned `0.46%`, direct `MHIGRWCYFY` at `/9` returned `2.74%`. Tract values matched at `2.24%`.)
+### What is NOT drift (don't log here)
 
-**Route to:** `MHIGRWCYFY` via `query_gis_field` on:
-- Block Group: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/12`
-- Tract: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/11`
-- ZIP: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/9`
-- County: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/7`
-
-Pair with `PCIGRWCYFY` (per-capita income CAGR) on the same layers if needed. Use `MEDCRNT_CY` / `MEDCRNT_FY` on the same layers for forecasted rent (compute CAGR as `(FY/CY)^(1/5) − 1`). Use `HUGRWCYFY` (total housing units CAGR) and `RNTGRWCYFY` (renter-occupied units CAGR) for unit-supply forecasts.
-
-### What is NOT a mismatch (do not add to the list)
-
-- **Legitimate scale differences.** Block Group income ≠ Tract income ≠ ZIP income because they cover different populations. That is the point of comparing scales. Do not flag this as divergence.
-- **Null at a scale that doesn't carry the field.** E.g., crime at Tract returns null because crime is Block-Group-only. Surface the gap (R9), don't escalate it here.
-- **Fresh values the user hasn't seen before.** Unfamiliarity isn't a mismatch — only reproducible disagreement vs. the raw layer is.
+- **Legitimate scale differences.** Block Group income ≠ Tract income ≠ ZIP income because they cover different populations. That's the point of comparing scales.
+- **Null at a scale that doesn't carry the field.** Topology, not drift. Surface per R9.
+- **Fresh values the user hasn't seen before.** Unfamiliarity is not drift; reproducible disagreement vs. the newest canonical service is.
 
 ## Latest-vintage routing (R14)
 
@@ -93,18 +74,13 @@ Independent of the field name: the **service** that hosts the field has its own 
 
 When a new field pair or service-vintage drift is observed, add a row here or an entry under "Illustrative drift examples" below.
 
-## Flaky Fields That Look Reliable (Tier 3 Trap)
+## Historically flaky fields (hints, not rules)
 
-Six core-looking `query_gis_field` fields only succeed ~30% of the time. **Do NOT query these directly**:
+Some fields (e.g., `MEDHINC_CY`, `MEDAGE_CY`, `PCI_CY`, `OWNER_CY`, `RENTER_CY`, `AVGHHSZ_CY`) returned "No data found" more often than not in older logs. Those percentages were against a specific service/address mix and may have shifted — treat them as hints to watch for failure, not as rules to pre-emptively skip.
 
-- `MEDHINC_CY` (28.6% success) — use `get_section_data("income")` → `median_household_income`
-- `MEDAGE_CY` (30.8%) — no reliable alternative; accept as potentially missing
-- `PCI_CY` (28.6%) — no reliable alternative
-- `OWNER_CY` (30.8%) — no reliable alternative
-- `RENTER_CY` (30.8%) — no reliable alternative
-- `AVGHHSZ_CY` (30.8%) — no reliable alternative
-
-If your output needs one of these, try to satisfy the user from the bundled income/expansion data. Do NOT write "Median Income: N/A" in a table — per R9, omit the row entirely.
+- Try the field on the newest-vintage service returned by `search_real_estate_data`; layer numbers and coverage can change when services update.
+- If it fails, handle per R9 (omit the row) and F1 (escalate scale for single-address work; drop the candidate for ranking).
+- Don't write "N/A" in a table. Don't substitute a section value into a canonical row without labeling it as such.
 
 ## Coverage & Layer Limitations
 
@@ -186,14 +162,14 @@ If your output needs one of these, try to satisfy the user from the bundled inco
 - Never ask the user to confirm before running a large batch or a state-wide ranking.
 - The "20 search limit" referenced in some older guidance does not exist.
 
-## Observed Failure-Rate Baseline
+## Failure patterns worth knowing
 
-From ~20 past sessions (before this skill existed):
-- **292** "No data found" occurrences
-- **254** "outside service area" occurrences
-- Single address retried up to **4×** with identical failure (don't do this)
+From prior sessions, two common failure modes dominate:
 
-These should drop materially when the F1/F2 escalation rules are followed (one strike, then escalate or drop).
+- **"No data found"** — field is empty at the queried (layer, service) pair. Most often because the layer doesn't carry that field on that service, not because the address is unusual.
+- **"Outside service area"** — the service can't geocode / locate the address inside the queried layer.
+
+In both cases, retrying the same (address, layer, service, field) tuple will reproduce the failure. Follow F1/F2 — one strike, then escalate or drop. The fix is usually to re-run `search_real_estate_data` and switch to the newest-vintage service URL rather than to retry the same layer.
 
 ## What to Do When Something Is Weird
 

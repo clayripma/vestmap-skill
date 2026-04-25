@@ -1,6 +1,6 @@
 ---
 name: vestmap
-description: Use any time the user asks about property demographics, income, crime, schools, natural hazards, market trends, or investment research at a US address — or any time an `mcp__VestMap_*` tool is about to be called. VestMap usage is FREE AND UNLIMITED — never warn about cost, never ask for confirmation, never check quota. For single-address questions, lead with bundled `get_section_data`. For open-ended / ranking / multi-address questions, run as many calls as needed in parallel to figure out the answer. Uses empirically-verified field reliability tiers and forbids fabrication or analysis beyond what returned numbers literally show.
+description: Use any time the user asks about property demographics, income, crime, schools, natural hazards, market trends, or investment research at a US address — or any time an `mcp__VestMap_*` tool is about to be called. VestMap usage is FREE AND UNLIMITED — never warn about cost, never ask for confirmation, never check quota. For single-address questions, lead with bundled `get_section_data` for orientation and verify the canonical source for any quantitative output. For open-ended / ranking / multi-address questions, run as many calls as needed in parallel to figure out the answer. Discover the current canonical source per query via `search_real_estate_data` — never rely on memorized layer numbers or historical reliability percentages. Forbids fabrication or analysis beyond what returned numbers literally show.
 user_invocable: true
 ---
 
@@ -11,7 +11,7 @@ General-purpose methodology for the VestMap Real Estate Intelligence MCP tool.
 **VestMap usage is FREE AND UNLIMITED.** There is no 20-search limit. There is no quota. There is no cost. Never warn the user about call volume, never ask for confirmation before bulk work, never call `vestmap_account` as a pre-flight check. If the user asks an open-ended question ("which ZIP in Colorado has highest pop growth?"), just figure it out — query as many addresses as needed, in parallel, and return the answer.
 
 The skill provides two complementary modes:
-- **For single-address lookups**: lead with the bundled `get_section_data` discovery batch (proven 100% reliable in past sessions), then fill specific gaps with `query_gis_field`.
+- **For single-address lookups**: lead with the bundled `get_section_data` discovery batch for orientation, then verify the canonical source for any quantitative output (R13) and fill specific gaps with `query_gis_field`.
 - **For open-ended / ranking / multi-address questions**: enumerate the candidate set, run parallel section calls or field queries against all of them, rank or aggregate, return the answer.
 
 Stay grounded — every number comes from a tool result, no fabrication, no qualitative analysis beyond the literal numbers.
@@ -38,7 +38,7 @@ Do not guess a location, do not pick a default city, do not call any VestMap too
 
 **R2. Query ≤3 fields per `query_gis_field` call.** Multi-field batches (>3 fields) fail ~40% of the time because one missing field zeroes the whole call. Use parallel tool calls.
 
-**R3. For single-address lookups, lead with `get_section_data`.** The bundled sections `income`, `expansion`, `crime`, and `schools` were 100% reliable across 74 past calls. Use them as the unconditional first move on any address-specific question. Fall back to `query_gis_field` for specific gaps (Section 3). For ranking / multi-address questions, see Section 4.
+**R3. For single-address lookups, lead with `get_section_data` as orientation.** The bundled sections `income`, `expansion`, `crime`, and `schools` return a payload reliably and are the fastest first move on any address-specific question. Treat the payload as orientation (fine to serve as-is for §Snapshot); for any quantitative output, route through R13's canonical verification. Fall back to `query_gis_field` for specific gaps (Section 3). For ranking / multi-address questions, see Section 4.
 
 **R4. Never call `generate_vestmap_report` unless the user explicitly says "DISCERN" or "full VestMap report".**
 
@@ -98,9 +98,9 @@ get_section_data(address, "schools")    → top 3 nearest schools + district_nam
 ```
 
 **Do NOT include in discovery:**
-- `demographics` — Tapestry narrative only, no hard metrics
-- `neighborhood` — empirically broken (0/12 success in past logs)
-- `hpi` — ~10% failure rate, only call if user specifically wants HPI
+- `demographics` — Tapestry narrative only, no hard metrics (R5).
+- `neighborhood` — has consistently returned "No data available"; don't call it as part of the default batch. If the user asks for walkability / transit / neighborhood character specifically, discover via `search_real_estate_data` first.
+- `hpi` — fragile; only call when the user specifically asks for House Price Index, and handle the failure case.
 
 ### Step 2 — Route by output intent (R13)
 
@@ -204,28 +204,16 @@ This skill deliberately does NOT have an "OM HTML page" output mode. If asked fo
 
 ## Quick Reference Summary
 
-**Single-address tool order:** R0 scope-gate → parallel `get_section_data(income, expansion, crime)` (+ `schools` only if asked) → route per R13 (bad-list fields → `query_gis_field` canonical; everything else → trust discovery, do not re-verify) → Tier 1 fill-in for anything discovery doesn't cover → cite vintage per R14 → apply R7 / R9 / R10 / R11 → default output is §Snapshot unless the user asked for a specific shape.
+**Single-address tool order:** R0 scope-gate → parallel `get_section_data(income, expansion, crime)` (+ `schools` only if asked) for orientation → route by output intent (R13): §Snapshot uses section directly; any quantitative output triggers `search_real_estate_data` → newest-vintage service (R14) → `query_gis_field` at the user's scales → cite vintage on both axes → apply R7 / R9 / R10 / R11 → default output is §Snapshot unless the user asked for a specific shape.
 
-**Routing list (authoritative copy in `gotchas.md` → "Known bad/incomplete discovery fields"):**
-- `annual_forecasted_median_income_growth` (income section) → use `MHIGRWCYFY` at `/12` `/11` `/9` `/7` instead.
-- (List grows only when a new mismatch is confirmed against the raw layer.)
+**Ranking tool order:** enumerate candidates → canonical verification per R13/R14 (search → newest service → `query_gis_field`) for the target metric across candidates → sort → drop blanks → top N table with vintage cited in the source note. No quota concerns, no confirmation step.
 
-**Ranking tool order:** enumerate candidates → parallel `get_section_data(<section>)` per candidate → extract target metric → sort → drop blanks → top N table. No quota concerns, no confirmation step.
+**Source-trust note.** Section payloads return reliably, but "reliable payload" ≠ "canonical value." Sections can be wired to older services or ship fewer scales than the underlying layer actually carries. Do not treat a returned payload as authoritative for quantitative output. Single-level-only topology facts are stable:
+- Crime → Block Group only (`USA_Crime_2024/MapServer/12`)
+- FEMA NRI → Tract only (`National_Risk_Index_Census_Tracts/FeatureServer/0`)
+- Business → CBSA only (`Enriched_USA_Metropolitan_Statistical_Areas/FeatureServer/0`)
 
-**Section reliability (empirical):**
-- 100%: `income`, `expansion`, `crime`, `schools`
-- ~90%: `hpi` — handle failure
-- Do not use as data source: `demographics` (Tapestry), `neighborhood` (always empty)
-
-**Layer reliability (empirical):**
-- ZIP `/9` — 100% (most reliable single-level choice)
-- Tract `/11` — 97.5%
-- Block Group `/12` — 97.5%
-- County `/7` — 88% (rural fallback)
-- Never use: State `/3` or `/19` (0%), Place/City `/20` (28%)
-- Crime: `USA_Crime_2024/MapServer/12` (Block Group only)
-- FEMA NRI: `services.arcgis.com/.../National_Risk_Index_Census_Tracts/FeatureServer/0` (Tract only)
-- CBSA: `services5.arcgis.com/.../Enriched_USA_Metropolitan_Statistical_Areas/FeatureServer/0` (Metro only)
+For every other field and layer, `search_real_estate_data` returns the current canonical URL. Use it — don't memorize layer numbers or historical reliability percentages; they go stale when services update.
 
 **Tier 1 fields:** `OCCMGMT_CY`, `OCCSALE_CY`, `OCCCOMP_CY`, `OCCEDUC_CY`, `OCCHLTH_CY`, `OCCFOOD_CY`, `OCCPROT_CY`, `OCCPERS_CY`, `OCCBLDG_CY`, `OCCCONS_CY`, `OCCFARM_CY`, `OCCPROD_CY`, `OCCTRAN_CY`, `EMP_CY`, `UNEMP_CY`, `FAMHH_CY`, `NOHS_CY`, `HSGRAD_CY`, `SMCOLL_CY`, `BACHDEG_CY`, `GRADDEG_CY`, `HINC0_CY`–`HINC200_CY`, `TOTHH_CY`
 

@@ -1,16 +1,24 @@
 # VestMap Field Catalog
 
-Empirical reliability tiers for `query_gis_field` calls, derived from 1,821 past calls across 44 sessions. Query Tier 1 with confidence, Tier 2 with fallback handling, Tier 3 never (use `get_section_data` instead), Tier X only after `search_real_estate_data` discovery.
+A catalog of fields observed in past sessions with **rough historical success hints**. These hints were derived from old logs against specific service/address mixes — treat them as orientation, not as rules. Services update and success rates shift; the authoritative source for a field's current availability is always `search_real_estate_data`.
 
-Convention: `_CY` suffix = Current Year (2024). `_FY` suffix = Future Year (2029 forecast).
+Convention: `_CY` suffix = Current Year. `_FY` suffix = Future Year (forecast).
 
 ---
 
-## Reliability Tier System
+## How to use this catalog
 
-### Tier 1 — Query with confidence (>80% empirical success)
+- **Try the field.** Don't pre-emptively skip based on a historical percentage. Handle failure per R9 (omit the row) and F1 (escalate scale).
+- **Confirm the service per query.** Historical tier rates were measured against specific services; a field that failed on an older service may work on the 2024 service and vice versa.
+- **Field not listed?** `search_real_estate_data(query="<topic keywords>", max_results=15)` and use the returned field name + service URL directly.
 
-These fields returned non-null data in 80%+ of past calls across MapServer `/9`, `/11`, `/12`. Query freely in Step 3 of the discovery workflow.
+---
+
+## Historical success hints
+
+### Usually works (>80% in older logs)
+
+Across MapServer `/9`, `/11`, `/12` in past sessions. Query freely.
 
 **Employment + all 13 Occupations**
 - `EMP_CY` — Employed civilian population 16+
@@ -49,9 +57,9 @@ These fields returned non-null data in 80%+ of past calls across MapServer `/9`,
 - `HINC150_CY` — $150,000–$199,999
 - `HINC200_CY` — $200,000+
 
-### Tier 2 — Query but expect gaps (~50% empirical success)
+### Often fails, still worth trying (~50% in older logs)
 
-These return data about half the time. Query them, but have a fallback ready and don't panic if blank.
+Query them. Have a fallback plan. Don't panic if they return blank.
 
 | Field | Success | Notes |
 |---|---|---|
@@ -59,9 +67,9 @@ These return data about half the time. Query them, but have a fallback ready and
 | `UNEMPRT_CY` | 50% | Prefer this for direct read; compute from `UNEMP_CY / (EMP_CY + UNEMP_CY)` as fallback if both Tier 1 fields are present |
 | `AVGHINC_CY` | ~50% | Use this over `MEDHINC_CY` if querying directly — but `get_section_data("income")` is better |
 
-### Tier 3 — Do NOT query directly (<35% empirical success)
+### Historically flaky (<35% in older logs) — try anyway
 
-These look like obvious core metrics but fail 65%+ of the time via `query_gis_field`. **Use `get_section_data("income")` or the relevant bundled section instead** — they return the same concepts more reliably and at more geographic levels.
+These returned null most of the time in older logs. Don't pre-emptively skip; try them on the newest-vintage service returned by `search_real_estate_data`. If they fail, fall back to `get_section_data` (for orientation) or handle per R9. Do NOT substitute a section value into a canonical row without labeling it as such.
 
 | Field | Success | Bundled alternative |
 |---|---|---|
@@ -72,9 +80,9 @@ These look like obvious core metrics but fail 65%+ of the time via `query_gis_fi
 | `RENTER_CY` | 30.8% | (same as above) |
 | `AVGHHSZ_CY` | 30.8% | No bundled alternative |
 
-### Tier X — Unvalidated (never tested in past logs)
+### Unvalidated (no history)
 
-Appear in field catalogs but no empirical success data. **Discover via `search_real_estate_data` first** to confirm they exist on the layer you're targeting. Do not query blind.
+Appear in field catalogs but no historical hit data. **Discover via `search_real_estate_data` first** to confirm the field and pick the newest-vintage service (R14) before querying.
 
 - `MEDHINC_FY` — Median HH income 2029 forecast — use `get_section_data("income")` → `annual_forecasted_median_income_growth` instead
 - `MEDVAL_CY` — Median home value — use `get_section_data("income")` → `median_home_value` instead
@@ -242,6 +250,6 @@ Not available at Block / Tract / ZIP / County.
 
 For any field not in this catalog, call `search_real_estate_data(query="<topic keywords>", max_results=15)` first. Use the returned field name + layer URL directly — do not guess.
 
-## No More "19-Field Locked Schema"
+## No locked schema
 
-An earlier version of this skill claimed a "reliable 19-field locked schema". Empirical testing showed 6 of those 19 fields return blank ~70% of the time (`MEDAGE_CY`, `MEDHINC_CY`, `PCI_CY`, `OWNER_CY`, `RENTER_CY`, `AVGHHSZ_CY`). That schema is discarded. There are only the empirical tiers above. **Lead with `get_section_data` (Step 1 discovery), supplement with Tier 1 fields (Step 3), expect gaps in Tier 2, skip Tier 3 entirely.**
+An earlier version of this skill claimed a "reliable 19-field locked schema" with fixed routing. That kind of precooked map ossifies whenever the underlying services update, and six of its fields turned out to return blank most of the time. No locked schema. Lead with `get_section_data` for orientation, run `search_real_estate_data` per query for canonical routing (R13/R14), and treat the catalog above as historical hints — not rules.

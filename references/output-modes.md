@@ -131,7 +131,7 @@ get_section_data(address, "schools")    [only if user asked about schools]
 
 **Step 2** — Check which sections returned data. Plan the brief around only those sections.
 
-**Step 3** — Targeted `query_gis_field` fill-in for Tier 1 fields the user explicitly needs (occupations, education, income distribution buckets). Skip any section that depends on Tier 3 / Tier X fields unless data actually came back.
+**Step 3** — Canonical verification via `query_gis_field` for the metrics §Brief will actually show (R13). Run `search_real_estate_data` for each metric, route through the newest-vintage service (R14), and query at the scales the Brief will display. For a Brief, the section payload is orientation only — numbers in the final output should be canonical. Try the fields; handle failures per R9/F1 rather than pre-emptively skipping based on historical reliability.
 
 **Step 4** — Assemble. Use only sections where data is present.
 
@@ -159,7 +159,7 @@ get_section_data(address, "schools")    [only if user asked about schools]
 
 ### If nothing returned
 
-If the entire discovery batch failed (rare — these sections are 100% reliable in past logs), tell the user honestly:
+If the entire discovery batch failed, tell the user honestly:
 > "I couldn't pull reliable data for this address. Here's what I tried: [list of calls] and here's what failed: [failures]. Is there a different address, or a specific metric you're targeting?"
 
 Do NOT invent a brief from general knowledge.

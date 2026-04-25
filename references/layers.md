@@ -4,25 +4,23 @@ All layer URLs used by the VestMap MCP tool, with coverage notes and known limit
 
 ## Primary Demographics Service
 
-Base URL: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer`
+Current URL (as of this writing): `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer`
 
-Empirical field-success rates from past logs:
+The `_2024` suffix is the vintage; newer vintages will eventually supersede it. **Do not memorize service URLs or layer numbers from this file** — always pass the metric through `search_real_estate_data` and use the URL it returns. What follows is a historical snapshot to orient you, not a routing authority.
 
-| Level | Layer URL | Field success | Preferred For |
-|---|---|---|---|
-| ZIP Code | `…/MapServer/9` | **100%** | **Most reliable single-level**. Default choice when you only need one level. Broadest standard geography. |
-| Block Group | `…/MapServer/12` | 97.5% | Finest geography, nearly as reliable as ZIP. Use for neighborhood-scale comparisons. |
-| Tract | `…/MapServer/11` | 97.5% | Middle tier — FEMA NRI natively uses tract boundaries. |
-| County | `…/MapServer/7` | 88% | Rural fallback + baseline for income-distribution Diff. |
-| State | `…/MapServer/3` | 0% (FAILING) | **Do NOT use.** Nothing returns here. |
-| Place / City | `…/MapServer/20` | 28% | **Avoid.** Very unreliable. |
+Observed layer IDs on the 2024 service:
 
-**Full URLs:**
-- Block Group: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/12`
-- Tract: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/11`
-- ZIP: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/9`
-- County: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/7`
-- State: `https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/3`
+| Level | Layer URL | Notes |
+|---|---|---|
+| Block Group | `…/MapServer/12` | Finest geography. |
+| Tract | `…/MapServer/11` | FEMA NRI natively uses tract boundaries. |
+| ZIP Code | `…/MapServer/9` | Broadest standard geography below county. |
+| County | `…/MapServer/7` | Used for Diff baselines and rural fallback. May lack some forecast-growth fields (those have been observed at `/22` or `/23` on the 2024 service — verify per query). |
+| State | `…/MapServer/3` | Historical logs against older services marked this "0% — never use"; that was wrong for the 2024 service, which returns forecast-growth fields cleanly here. Verify per query. |
+| Place / City | `…/MapServer/20` | Historically unreliable; may or may not hold data for a given metric. Verify per query. |
+| National | `…/MapServer/2` | Observed for forecast-growth fields on the 2024 service. Verify per query. |
+
+Reliability of any (layer, field) pair is service-specific and can change when the service updates. Don't prune layers based on old percentages. Try the canonical source returned by `search_real_estate_data`; if it returns null, handle per R9/F1.
 
 ## Crime Data (Block Group Only)
 
@@ -68,22 +66,16 @@ URL: `https://services5.arcgis.com/9fQmObndozAJu9f5/arcgis/rest/services/Enriche
 | Demographics overview | `get_section_data("demographics")` — bundled |
 | Income overview | `get_section_data("income")` — bundled |
 
-## Legacy / Alternative Layers (Use With Caution)
+## Service vintage (R14 Axis 2)
 
-Prior-year snapshots exist (2020, 2021, 2022). Do NOT use these unless the user explicitly asks for historical data. The 2024 layers above are canonical.
+When `search_real_estate_data` returns hits on multiple services for the same field, prefer the one with the newest year tag in its URL: `..._2024` > `..._2021` > `..._2020`. Section payloads in `get_section_data(...)` are wired to specific services and may still serve older vintages (see `gotchas.md` → Illustrative drift examples). For quantitative output, route through the newest-service URL the search tool returns rather than the section.
 
-ACS alternative layers at `USA_ACS_2024/MapServer/{6,7,10,12,23,25}` — different field naming (`ACSXXX` prefix, `B25XXX` Census table codes). Use only for fields not available in the primary Demographics 2024 service. **Always discover via `search_real_estate_data` first** — do not guess ACS field names or layer indices.
+ACS alternative layers at `USA_ACS_2024/MapServer/{6,7,10,12,23,25}` — different field naming (`ACSXXX` prefix, `B25XXX` Census table codes). Per R14 Axis 1, prefer Esri `_CY` over ACS when both hit. **Always discover via `search_real_estate_data` first** — do not guess ACS field names or layer indices.
 
-## Layer Strategy (NOT a strict fallback chain)
+## Layer Strategy
 
-**Default strategy: query Block Group, Tract, and ZIP in parallel.** All three are 97.5-100% reliable. Use whichever return data — no need to retry failures sequentially.
+**Default for multi-scale comparison:** query Block Group, Tract, and ZIP in parallel on the newest-vintage service. Use whichever return data — no need to retry failures sequentially.
 
-**For single-level lookups** (e.g., user only wants one number): query ZIP (/9). It has the highest empirical success rate (100%) and is the safest single choice.
+**Single-level lookups:** start with the scale the user asked about. ZIP is usually the broadest safe single choice. Don't pre-exclude layers based on historical percentages — try the canonical source and handle failure per R9/F1.
 
-**For rural or sparse-coverage addresses:** if the parallel Block/Tract/ZIP batch returns all-null, escalate to County (/7). Do not try State — it has 0% success.
-
-**Fallback chain (only for addresses where the parallel batch failed):**
-
-**Block Group → Tract → ZIP → County → *(stop)*** 
-
-Never attempt State (/3 or /19) or Place/City (/20) — empirical success rates are 0% and 28% respectively. Never re-query a failed layer (F1). Cache the smallest-working-level per address (F3).
+**Sparse-coverage addresses:** if the parallel Block/Tract/ZIP batch returns all-null, escalate outward (County, then State/National) — topology permitting, per whatever the metric's search result shows. Never re-query a failed layer (F1). Cache the smallest-working-level per address (F3).
