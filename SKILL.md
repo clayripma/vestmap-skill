@@ -69,13 +69,15 @@ Routing rule:
 
   `references/gotchas.md` keeps **illustrative examples** of known section/service drift (e.g., `annual_forecasted_median_income_growth`). Those are evidence of the general pattern — they are NOT an exhaustive routing list, and "not on the list" is never a reason to skip canonical verification for quantitative output. Discover the current canonical source per query; don't trust a precooked routing map that ossifies when services update.
 
-**R14. Prefer latest-vintage fields.** Before settling on an ACS hit from `search_real_estate_data`, scan the full result set for an Esri `_CY` / `_FY` equivalent on the same metric. Use the newer field unless no `_CY` exists or the user explicitly asked for ACS. Cheat sheet of known pairs (fuller table in `references/gotchas.md`):
+**R14. Prefer latest-vintage on both field AND service axes.** `search_real_estate_data` results carry two independent vintages. Scan the full result set and prefer the newest on each axis before routing:
 
-  - **Rent:** `MEDCRNT_CY` (Esri) > `ACSMEDGRNT` (ACS). ⚠️ Definitional difference: `MEDCRNT_CY` is *contract* rent (tenant payment only); `ACSMEDGRNT` is *gross* rent (contract + utilities). Cite the difference when reporting — do not treat them as interchangeable.
-  - **Median household income:** `MEDHINC_CY` (Esri) > `ACSMEDHINC` (ACS).
-  - **Median home value, total population, households:** prefer the `_CY` variant on the same layer over the ACS equivalent.
+  - **Field vintage.** Esri `_CY` / `_FY` > ACS when both hit for the same concept.
+    - **Rent:** `MEDCRNT_CY` (Esri) > `ACSMEDGRNT` (ACS). ⚠️ Definitional difference: `MEDCRNT_CY` is *contract* rent (tenant payment only); `ACSMEDGRNT` is *gross* rent (contract + utilities). Cite the difference when reporting.
+    - **Median household income:** `MEDHINC_CY` (Esri) > `ACSMEDHINC` (ACS).
+    - **Home value / total population / households:** prefer the `_CY` variant over the ACS equivalent.
+  - **Service vintage.** When the same field appears on multiple services, prefer the one with the newer year tag in the service URL — e.g., `USA_Demographics_and_Boundaries_2024` > `..._2021` > older. **Layer numbers are NOT stable across services**; the same `/MapServer/N` on an older service can return a stale value or no value. Trust the service URL returned by `search_real_estate_data`, not a memorized layer map.
 
-  Always cite vintage inline — **`(Esri 2024)`** for `_CY` / `_FY`, **`(ACS 2022 5-Yr)`** (or the actual reported vintage) for ACS — so the user can reason about how fresh the number is.
+  Cite both axes inline: `(Esri 2024, Boundaries_2024)` / `(ACS 2022 5-Yr)` / `(Boundaries_2021 — stale, newer service available)` so the user can reason about freshness.
 
 ## Section 3 — Single-Address Discovery-First Workflow
 
@@ -183,7 +185,7 @@ If the user asked for "the highest" (singular), still show the top 5-10 so they 
 
 **F6. VestMap is FREE AND UNLIMITED.** Never call `vestmap_account` as a pre-flight check. Never warn about cost, quota, credits, or call volume. Never ask the user to confirm before bulk or ranking work. Never hedge with "this might take a while" or "this will use ~N calls". The "20 search limit" mentioned in any earlier guidance does not exist — ignore it. Just run the queries.
 
-**F7. `search_real_estate_data` before any custom / non-Tier-1 field query.** Never guess field names. When the result set contains both an Esri `_CY` / `_FY` hit and an ACS hit for the same concept, default to the `_CY` per R14 and cite the vintage inline.
+**F7. `search_real_estate_data` before any field query you're not fully sure of.** Never guess field names. Never assume the layer you used last session is still the canonical one — services update. When the result set contains multiple hits for the same concept, pick the newest on both axes per R14 (`_CY`/`_FY` over ACS; newer service over older) and cite both vintages inline.
 
 ## Output Mode Router
 

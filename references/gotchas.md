@@ -61,26 +61,37 @@ Pair with `PCIGRWCYFY` (per-capita income CAGR) on the same layers if needed. Us
 - **Null at a scale that doesn't carry the field.** E.g., crime at Tract returns null because crime is Block-Group-only. Surface the gap (R9), don't escalate it here.
 - **Fresh values the user hasn't seen before.** Unfamiliarity isn't a mismatch — only reproducible disagreement vs. the raw layer is.
 
-## Latest-vintage field pairs (R14)
+## Latest-vintage routing (R14)
 
-When `search_real_estate_data` returns both an Esri `_CY` / `_FY` hit and an ACS hit for the same concept, prefer the Esri one unless the user explicitly asked for ACS. Always cite vintage inline (`(Esri 2024)` / `(ACS 2022 5-Yr)`).
+R14 has two axes. Both apply every time you pick a source.
+
+### Axis 1 — Field vintage
+
+When `search_real_estate_data` returns both an Esri `_CY` / `_FY` hit and an ACS hit for the same concept, prefer the Esri one unless the user asked for ACS.
 
 | Concept | Prefer (newer) | Fallback (older) | Notes |
 |---|---|---|---|
 | Median rent | `MEDCRNT_CY` (Esri) | `ACSMEDGRNT` (ACS) | ⚠️ `MEDCRNT_CY` is *contract* rent (payment to landlord only). `ACSMEDGRNT` is *gross* rent (contract + utilities). Not interchangeable — call out the definitional difference whenever you report either. |
 | Median household income | `MEDHINC_CY` (Esri) | `ACSMEDHINC` (ACS) | Same concept, Esri is current-year modeled, ACS is 5-year rolling average. |
 | Median home value | `MEDVAL_CY` (Esri) | `ACSMEDVAL` (ACS) | Prefer `_CY`. |
-| Total population | `TOTPOP_CY` (Esri) | `ACSTOTPOP` (ACS) | Prefer `_CY` when available; `TOTPOP_CY` is known Tier-2 (~50% success), so ACS may be the only option at some geographies. |
-| Households | `TOTHH_CY` (Esri) | `ACSTOTHH` (ACS) | Prefer `_CY` (Tier-1 reliable). |
+| Total population | `TOTPOP_CY` (Esri) | `ACSTOTPOP` (ACS) | Prefer `_CY` when available. |
+| Households | `TOTHH_CY` (Esri) | `ACSTOTHH` (ACS) | Prefer `_CY`. |
 
-**How to use this table:**
-1. `search_real_estate_data(<concept>)` — always.
-2. Scan **the full result set**, not just the first hit — ACS fields often appear first alphabetically.
-3. If both a `_CY` and an ACS hit exist, pick the `_CY`.
-4. Cite vintage inline: e.g., *"Median HH income $72,500 `(Esri 2024)`"*.
-5. For rent, always note contract-vs-gross when citing either field.
+### Axis 2 — Service vintage
 
-When a new pair is discovered (same concept, both vintages present in search results), add the row here.
+Independent of the field name: the **service** that hosts the field has its own vintage, visible in the service URL (e.g., `USA_Demographics_and_Boundaries_2024` vs `..._2021`). When the same field exists on multiple services, prefer the one with the newer year tag.
+
+**Why this matters:** layer numbers (`/MapServer/N`) are NOT stable across services. A layer that works on one service may be empty, stale, or refer to a different geography on another. The same is true for section payloads — `get_section_data(...)` is wired to specific services that may not be the newest. Don't memorize layer numbers; let `search_real_estate_data` return the current URL each query.
+
+### How to use both axes
+
+1. `search_real_estate_data(<concept>)` every time the metric isn't already in your working memory for this session.
+2. Scan the **full** result set — ACS and older-service hits often appear first alphabetically.
+3. Pick the hit that's newest on both axes: `_CY`/`_FY` field AND latest service.
+4. Cite both vintages inline: *"Median HH income $72,500 `(Esri 2024, Boundaries_2024)`"* or *"Forecast growth 2.74% `(Boundaries_2024)` — section value `(Boundaries_2021, stale)` was 0.46%."*.
+5. For rent, always note contract-vs-gross.
+
+When a new field pair or service-vintage drift is observed, add a row here or an entry under "Illustrative drift examples" below.
 
 ## Flaky Fields That Look Reliable (Tier 3 Trap)
 
