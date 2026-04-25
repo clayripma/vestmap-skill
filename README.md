@@ -19,8 +19,7 @@ Covers:
 - **Market trends** — Growth projections and historical change
 - **Business activity** — CBSA-level business and employee counts
 
-All data comes from ESRI, AGS, FHFA, FEMA, and the US Census via live VestMap queries. Nothing is estimated.
-
+All data comes from ESRI, AGS, FHFA, FEMA, and the US Census via live VestMap queries. 
 ## Requirements
 
 - [Claude Code](https://claude.ai/claude-code)
