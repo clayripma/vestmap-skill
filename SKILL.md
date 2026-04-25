@@ -58,13 +58,16 @@ Do not guess a location, do not pick a default city, do not call any VestMap too
 
 **R12. Open-ended questions get full exploration.** When the user asks something exploratory ("which X has highest Y", "rank the top 10", "find me the best Z in this state", "explore neighborhoods near…"), do NOT ask the user to narrow it down. Do NOT warn about how many calls it will take. Do NOT check quota. Enumerate the candidate set and run the calls in parallel. VestMap is unlimited — use it freely. The user wants you to figure it out, not to manage call budgets.
 
-**R13. Route, don't verify.** `references/gotchas.md` maintains the authoritative list under *"Known bad/incomplete discovery fields"*. Use it as a routing table up front — do not re-query discovery output to double-check it:
+**R13. Sections are convenience; canonical fields are truth for quantitative output.** `get_section_data(...)` is fast and usually returns a payload — treat it as **orientation data**, not as the authoritative source. The section payload can be silently stale (wired to an older service) or incomplete (missing scales the underlying layer actually carries). Neither failure mode is rare; neither is detectable just by looking at the payload.
 
-  - **Field is on the bad-list** → skip discovery for that metric and go straight to `query_gis_field` against the canonical `_CY` / `_FY` on the right layer at every scale the user asked for.
-  - **Field is not on the list** → trust `get_section_data`. Do not re-query to "verify". Do not compute per-query checksums. Do not flag Block-vs-Tract-vs-ZIP differences as "divergence" — those scales cover different populations and will legitimately differ.
-  - **Field returns null / impossible at a requested scale** → fail honestly (R9: omit the row). No silent substitution from another scale, another field, or general knowledge.
+Routing rule:
 
-  The list grows when a new mismatch is **confirmed against the raw layer** (discovery value vs. direct `query_gis_field` at the same geo, reproducibly disagreeing). That is how this skill gets smarter over time — via a curated routing list — not via per-query re-verification that burns calls and invents false divergences.
+  - **Orientation / §Snapshot output** → use the section payload directly. Fast, fine.
+  - **Any quantitative output** (comparison across scales, ranking, forecast, decision-grade numbers, anything the user will act on) → do not stop at the section value. Run `search_real_estate_data(<metric>)`, pick the newest-vintage hit per R14 (both field vintage AND service vintage), `query_gis_field` the canonical field at the scales the user asked about, and cite vintage inline.
+  - **Section value and canonical query disagree at the same geography** → prefer the canonical value and surface the mismatch so the user can see which source is being used.
+  - **Canonical query returns null at a requested scale** → fail honestly (R9, omit the row). No silent substitution from the section, another scale, or general knowledge.
+
+  `references/gotchas.md` keeps **illustrative examples** of known section/service drift (e.g., `annual_forecasted_median_income_growth`). Those are evidence of the general pattern — they are NOT an exhaustive routing list, and "not on the list" is never a reason to skip canonical verification for quantitative output. Discover the current canonical source per query; don't trust a precooked routing map that ossifies when services update.
 
 **R14. Prefer latest-vintage fields.** Before settling on an ACS hit from `search_real_estate_data`, scan the full result set for an Esri `_CY` / `_FY` equivalent on the same metric. Use the newer field unless no `_CY` exists or the user explicitly asked for ACS. Cheat sheet of known pairs (fuller table in `references/gotchas.md`):
 
@@ -84,9 +87,9 @@ For single-address questions, follow this sequence.
 get_section_data(address, "income")     → median HH income @ Block/Tract/ZIP/County/State/National,
                                            median home value @ Block/Tract/ZIP,
                                            annual_forecasted_median_income_growth @ Tract/ZIP only
-                                           ⚠️  On the bad-list (gotchas.md). Route straight to MHIGRWCYFY
-                                              via query_gis_field at /12 /11 /9 /7 — do not use the section
-                                              value. Block Group is OMITTED from the section entirely.
+                                           (orientation only — for quantitative output, verify canonical
+                                            per R13/R14; forecast growth has a documented drift example
+                                            in gotchas.md)
 get_section_data(address, "expansion")  → population growth CAGR @ Block/Tract/ZIP/County/State/National
 get_section_data(address, "crime")      → raw crime counts @ Block Group
 get_section_data(address, "schools")    → top 3 nearest schools + district_name (only if user touches schools)
@@ -97,25 +100,24 @@ get_section_data(address, "schools")    → top 3 nearest schools + district_nam
 - `neighborhood` — empirically broken (0/12 success in past logs)
 - `hpi` — ~10% failure rate, only call if user specifically wants HPI
 
-### Step 2 — Route (R13)
+### Step 2 — Route by output intent (R13)
 
-For each user need, consult the "Known bad/incomplete discovery fields" list in `references/gotchas.md`:
+What the user is going to do with the numbers decides which source to trust:
 
-- **Metric is on the bad-list** (e.g., `annual_forecasted_median_income_growth`) → skip discovery for that specific field; go to Step 3 and `query_gis_field` the canonical `_CY` / `_FY` at the requested scales.
-- **Metric is not on the list** → use the discovery payload as-is. Do not re-query to verify. Do not flag Block/Tract/ZIP differences as divergence — those scales cover different populations.
-- **Discovery omits a scale the user asked about** → Step 3: query the canonical field at the missing layer.
-- **Discovery returns null at a requested scale** → omit the row per R9. Do not substitute from another scale or field.
+- **§Snapshot / orientation** → use the section payload directly. Proceed to Step 4.
+- **Quantitative output** (§Compare, §MultiAddr, §Brief, §Rank, §Bulk — any output that invites comparison, ranking, or decision-making) → Step 3 runs canonical verification via `search_real_estate_data` → newest-vintage service (R14) → `query_gis_field`. Do not ship quantitative output sourced only from a section.
+- **Discovery omits a scale the user asked about** → Step 3: `search_real_estate_data` the metric, find the layer that carries it, query directly. Don't silently drop the scale.
+- **Discovery returns null and canonical also returns null at the requested scale** → omit the row per R9. Do not substitute.
 
-### Step 3 — Targeted `query_gis_field` Fill-In
+### Step 3 — Canonical verification via `query_gis_field`
 
-Tier-based selection from `references/fields.md`. Parallel calls, ≤3 fields each, across Block (`/12`), Tract (`/11`), ZIP (`/9`), County (`/7`).
+For any metric going into quantitative output: `search_real_estate_data(<metric>)` → scan the full result set for the newest-vintage service URL (per R14, e.g., `*_2024_*` > `*_2021_*`) → pick the canonical `_CY` / `_FY` field on that service → `query_gis_field` at every scale the user asked about, in parallel (≤3 fields per call).
 
-For a metric on the `gotchas.md` bad-list or a scale the discovery payload doesn't carry: `search_real_estate_data(<metric>)` → pick the canonical `_CY` / `_FY` field (prefer newer vintage per R14) → query it at every requested scale, in parallel.
+Do not assume layer numbers are stable across services — the same layer number on an older service may carry a stale value or no value at all. Trust the service URL returned by `search_real_estate_data`, not a baked-in layer map.
 
-- **Tier 1 (>80%):** all 13 occupations, 5 reliable education fields, 9 HINC buckets + TOTHH, EMP_CY, UNEMP_CY, FAMHH_CY
-- **Tier 2 (~50%):** TOTPOP_CY, UNEMPRT_CY, AVGHINC_CY
-- **Tier 3 (<35%):** skip — covered by `get_section_data("income")` more reliably
-- **Tier X (unvalidated):** discover via `search_real_estate_data` first
+If the canonical value disagrees with a non-null section value at the same geography, prefer canonical and note the mismatch (one short line, not a paragraph).
+
+`references/fields.md` catalogs fields observed in past logs, with rough historical success hints. Treat those hints as starting points, not hard rules — services update and success rates shift. Never pre-emptively skip a field because of a historical percentage; try it, and handle failure per R9/F1. Always run `search_real_estate_data` first when the metric isn't already in your working memory for this session.
 
 ### Step 4 — Build Output
 
