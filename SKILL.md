@@ -1,6 +1,6 @@
 ---
 name: vestmap
-description: Use any time the user asks about US property data — demographics, income, housing, crime, schools, hazards, market trends — at a specific address, ZIP, city, or region, or any time an `mcp__VestMap_*` tool is about to be called. Default workflow is `search_real_estate_data` → `query_gis_field` at Block Group / Tract / ZIP in parallel, presented as a comparison table with explicit deltas. VestMap is free and unlimited — no quota checks, no cost warnings.
+description: Use any time the user asks about US property data — demographics, income, housing, crime, schools, hazards, market trends — at a specific address, ZIP, city, or region, or any time an `mcp__VestMap_*` tool is about to be called. Default workflow is to construct Block Group / Tract / ZIP URLs directly on `USA_Demographics_and_Boundaries_2024` (layers `/12`, `/11`, `/9`) and call `query_gis_field` in parallel — never query a pre-2024 service unless the user explicitly asked for historical data. Output is a B/T/Z comparison table with explicit deltas. VestMap is free and unlimited — no quota checks, no cost warnings.
 user-invocable: true
 ---
 
@@ -16,25 +16,55 @@ Before any `mcp__VestMap_*` call, confirm the request has scope: a specific **ad
 
 Don't guess a default location.
 
+## Canonical 2024 layers (construct URLs directly — do not search)
+
+For any income / demographics / housing / employment / wealth field (`MEDHINC_CY`, `TOTPOP_CY`, `HINC*_CY`, `OCC*_CY`, `EMP_CY`, `UNEMP_CY`, `MEDVAL_CY`, `MEDCRNT_CY`, etc.), the canonical service is:
+
+```
+https://demographics5.arcgis.com/arcgis/rest/services/USA_Demographics_and_Boundaries_2024/MapServer/{N}
+```
+
+Layer index `{N}` by geography:
+
+| Geography   | Layer | Notes                                |
+|-------------|-------|--------------------------------------|
+| Block Group | `/12` | Finest geography                     |
+| Tract       | `/11` |                                      |
+| ZIP Code    | `/9`  |                                      |
+| County      | `/7`  |                                      |
+| CBSA        | `/6`  |                                      |
+| State       | `/3`  |                                      |
+| Place       | `/26` |                                      |
+| Country     | `/13` |                                      |
+
+**`search_real_estate_data` is NOT required to obtain a layer URL for any Boundaries_2024 field.** Construct the URL directly from this table and call `query_gis_field` with the field name. This is faster than searching and avoids the documented failure mode where search ranks a 2021 / 2022 / 2020 hit above the canonical 2024 layer at a given scale.
+
 ## Default workflow
 
 For a single-address question:
 
-1. **`search_real_estate_data(<metric keywords>)`** — find the canonical field. From the result set, pick the **newest-vintage service URL** (e.g., `*_2024_*` over `*_2021_*`) and prefer Esri `_CY` / `_FY` over the ACS equivalent for the same concept.
-2. **`query_gis_field` in parallel at the Block Group + Tract + ZIP layer URLs** returned by that search. Cap each call at 3 fields.
-3. **Render a Block Group / Tract / ZIP comparison table with deltas** (see Presentation).
+1. **Construct three URLs from the canonical table** — Block Group `/12`, Tract `/11`, ZIP `/9` on `USA_Demographics_and_Boundaries_2024`. Call `query_gis_field` on all three in parallel with the field name (e.g., `MEDHINC_CY`). Cap each call at 3 fields. **No search call is needed.**
+2. **Render a Block Group / Tract / ZIP comparison table with deltas** (see Presentation).
 
-**Do not lead with `get_section_data`.** Section payloads return reliably but are wired to specific (sometimes older) services and silently drift from the canonical layer. For any quantitative comparison, go straight to search → query. `get_section_data` is fine as a fallback when search returns nothing useful, or for the single-scale-only sections below.
+Use `search_real_estate_data` ONLY when:
+- (a) the field name is genuinely unfamiliar / not in your session memory,
+- (b) the metric lives on a non-Boundaries service (Crime, FEMA NRI, HPI, CBSA business — see Single-scale-only data),
+- (c) **trigger only**, not default — a construct-and-query attempt returned null at every scale and you need to confirm the field exists. Do not run a verification search every turn.
 
-For ranking questions across many candidates (ZIPs, cities, counties), run the same search → query pattern in parallel across the candidate set. Hundreds of parallel calls per turn is fine — VestMap is free and unlimited.
+When you do search, prefer Esri `_CY` / `_FY` over the ACS equivalent for the same concept. If the only canonical hit is on a pre-2024 service, see Hard rule 7 — surface the limitation, do not silently substitute a stale value.
 
-## Single-scale-only data
+**Do not lead with `get_section_data`.** Section payloads return reliably but are wired to specific (sometimes older) services and silently drift from the canonical layer. `get_section_data` is fine only for the single-scale-only sections below.
 
-These metrics live on one geography and have no multi-scale comparison. Skip the search and query the supported layer directly:
+For ranking questions across many candidates (ZIPs, cities, counties), run the same construct → query pattern in parallel across the candidate set. Hundreds of parallel calls per turn is fine — VestMap is free and unlimited.
+
+## Single-scale-only data (legitimate non-Boundaries_2024 exceptions)
+
+These metrics live on one geography and on a service other than `USA_Demographics_and_Boundaries_2024`. They are explicitly exempted from Hard rule 7 because no 2024 successor exists. Skip the search and query the supported layer directly:
 
 - **Crime** — Block Group only (`USA_Crime_2024/MapServer/12`). `get_section_data(address, "crime")` is a convenient shortcut.
 - **FEMA NRI hazards** — Tract only (`National_Risk_Index_Census_Tracts/FeatureServer/0`).
-- **CBSA business counts** (`N01_BUS`, `N01_EMP`) — CBSA only.
+- **HPI** (House Price Index) — ZIP only (`HPI_ZIP_2023/FeatureServer/0`). Pre-2024 vintage permitted because there is no 2024 successor.
+- **CBSA business counts** (`N01_BUS`, `N01_EMP`) — CBSA only (`Enriched_USA_Metropolitan_Statistical_Areas/FeatureServer/0`).
 
 ## Presentation
 
@@ -48,7 +78,7 @@ Default output for any single-address metric is a Block Group / Tract / ZIP comp
 
 Cite the source on a single line below the table — field name, service vintage, and the geography IDs hit. Example:
 
-> Source: `MEDHINC_CY` on `USA_Demographics_and_Boundaries_2024` — BG `060871011002`, Tract `06087101100`, ZIP `95060`.
+> Source: `MEDHINC_CY` on `USA_Demographics_and_Boundaries_2024` — BG `060871011002` (`/12`), Tract `06087101100` (`/11`), ZIP `95060` (`/9`).
 
 If the user gave a ZIP or city (no street address), silently omit the Block Group row — it's not meaningful at that scope.
 
@@ -64,3 +94,4 @@ If the user gave a ZIP or city (no street address), silently omit the Block Grou
 4. **Skip computations with missing inputs.** If any input field is null at a scale, drop that scale's row — don't partial-sum, don't interpolate.
 5. **Never call `generate_vestmap_report`** unless the user explicitly says "DISCERN" or "full VestMap report".
 6. **VestMap is free and unlimited.** Never call `vestmap_account` as a pre-flight check, never warn about call volume, never ask the user to confirm before bulk or ranking work.
+7. **Never query a service URL containing `_2020`, `_2021`, `_2022`, or `_2023`** unless the user explicitly asked for historical or trend data. The only acceptable demographics service is `USA_Demographics_and_Boundaries_2024`. If a search result surfaces an older-vintage hit for a field that has a 2024 successor (e.g., `Boundaries_2021/MapServer/49` for Block Group MEDHINC_CY — the documented failure mode), discard it and construct the 2024 URL from the canonical table. If no 2024 successor exists for a field, surface the limitation in the citation rather than silently using stale data. The pre-2024 services listed under Single-scale-only data (`USA_Crime_2024`, `National_Risk_Index_Census_Tracts`, `HPI_ZIP_2023`, `Enriched_USA_Metropolitan_Statistical_Areas`) are explicit exceptions.
