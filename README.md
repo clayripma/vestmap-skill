@@ -36,10 +36,18 @@ Then ask Claude anything about a US address — or just ask a VestMap-style ques
 
 ## Installation
 
+Clone the repo directly into your Claude Code skills directory:
+
 ```bash
-git clone https://github.com/clayripma/vestmap-skill.git
-cd vestmap-skill
-claude
+git clone https://github.com/clayripma/vestmap-skill.git ~/.claude/skills/vestmap
+```
+
+Then restart Claude Code. The skill will appear in the `/` menu as `/vestmap` and trigger automatically on relevant questions.
+
+To update later:
+
+```bash
+cd ~/.claude/skills/vestmap && git pull
 ```
 
 ## About VestMap
