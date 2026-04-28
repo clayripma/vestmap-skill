@@ -1,7 +1,7 @@
 ---
 name: vestmap
 description: Use any time the user asks about property demographics, income, crime, schools, natural hazards, market trends, or investment research at a US address — or any time an `mcp__VestMap_*` tool is about to be called. VestMap usage is FREE AND UNLIMITED — never warn about cost, never ask for confirmation, never check quota. For single-address questions, lead with bundled `get_section_data` for orientation and verify the canonical source for any quantitative output. For open-ended / ranking / multi-address questions, run as many calls as needed in parallel to figure out the answer. Discover the current canonical source per query via `search_real_estate_data` — never rely on memorized layer numbers or historical reliability percentages. Forbids fabrication or analysis beyond what returned numbers literally show.
-user_invocable: true
+user-invocable: true
 ---
 
 # VestMap Real Estate Data Skill
